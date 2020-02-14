@@ -1,0 +1,126 @@
+[gd_scene load_steps=7 format=2]
+
+[ext_resource path="res://Jim.gd" type="Script" id=1]
+
+[sub_resource type="GDScript" id=1]
+script/source = "extends KinematicBody
+
+var cam = 0
+var msens = -0.3
+var v=Vector3()
+var d=Vector3()
+var Y=true
+
+const SPEED=40
+const ACC=4
+
+func _physics_process(delta):
+	d=Vector3()
+	var aim = $Head/PCamera.get_global_transform().basis
+	
+	if Input.is_action_pressed(\"ui_up\"):
+		d-=aim.z
+	if Input.is_action_pressed(\"ui_down\"):
+		d+=aim.z
+	if Input.is_action_pressed(\"ui_left\"):
+		d-=aim.x
+	if Input.is_action_pressed(\"ui_right\"):
+		d+=aim.x
+	if Input.is_action_pressed(\"ascend\"):
+		d.y+=1
+	if Input.is_action_pressed(\"descend\"):
+		d.y-=1
+	if Input.is_action_just_pressed(\"V\"):	#teleport to pinter
+		self.transform.origin=get_node(\"Head/PCamera/P\").global_transform.origin
+		Y=true
+		
+	if Input.is_action_just_pressed(\"B\"):		#freezes portal cameras inplace
+		#self.rotate_y(PI)
+		if($Head/PCamera.debug == true):
+			$Head/PCamera.debug = false
+			print(\"Debug false\")
+		elif($Head/PCamera.debug == false):
+			$Head/PCamera.debug = true
+			print(\"Debug true\")
+
+		
+			
+	var target = d*SPEED
+	
+	d.normalized()
+	
+	
+	v= v.linear_interpolate(target,ACC*delta)
+
+	
+	if Input.is_action_just_pressed(\"T\"):		#spectre mode detach head to move it around and teleport with 'V'
+		Y=true
+	if Input.is_action_just_pressed(\"F\"):		#cancels spectre mode
+		Y=false
+		
+	if Y:
+		self.move_and_slide(v)
+		$Head/PCamera/P.transform.origin=Vector3(0,0,-10)
+		$Head.transform.origin=Vector3(0,0,0)
+	else:
+		$Head.move_and_slide(v)
+
+	if(abs(v.x)!=0):					#this triggers your player's camera
+		$Head/PCamera.start_update()
+
+
+func _input(event):
+	if event is InputEventMouseMotion:
+		$Head.rotate_y(deg2rad(event.relative.x * msens))
+		var change = event.relative.y * msens
+		if change + cam <90 and change + cam >-90:
+			$Head/PCamera.rotate_x(deg2rad(change))
+			cam += change
+		$Head/PCamera.start_update()
+			
+"
+
+[sub_resource type="CapsuleShape" id=2]
+height = 2.0
+
+[sub_resource type="CapsuleMesh" id=3]
+mid_height = 2.0
+
+[sub_resource type="SphereMesh" id=4]
+radius = 0.25
+height = 0.5
+
+[sub_resource type="SphereShape" id=5]
+
+[node name="Jim" type="KinematicBody"]
+script = SubResource( 1 )
+
+[node name="CollisionShape" type="CollisionShape" parent="."]
+transform = Transform( 1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, 0, -1.48988, -4.21885e-15 )
+shape = SubResource( 2 )
+
+[node name="MeshInstance" type="MeshInstance" parent="CollisionShape"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -6.38622e-10, -0.0146101 )
+mesh = SubResource( 3 )
+material/0 = null
+
+[node name="Head" type="KinematicBody" parent="."]
+transform = Transform( 1, 0, 0, 0, 1, -2.23517e-08, 0, 2.23517e-08, 1, 0, 0.49386, 0 )
+collision_layer = 524288
+collision_mask = 524288
+
+[node name="PCamera" type="Camera" parent="Head"]
+cull_mask = 3
+current = true
+script = ExtResource( 1 )
+
+[node name="P" type="Position3D" parent="Head/PCamera"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.68449, -10 )
+
+[node name="MeshInstance" type="MeshInstance" parent="Head/PCamera/P"]
+mesh = SubResource( 4 )
+material/0 = null
+
+[node name="CollisionShape" type="CollisionShape" parent="Head"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.68449, -10 )
+shape = SubResource( 5 )

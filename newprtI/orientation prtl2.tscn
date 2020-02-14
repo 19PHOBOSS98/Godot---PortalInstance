@@ -1,0 +1,801 @@
+[gd_scene load_steps=70 format=2]
+
+[sub_resource type="GDScript" id=1]
+script/source = "tool
+extends Spatial
+var p = null								#for storing paired portal node
+var b = 0									#keeps track of how many portals are using a channel
+var act = true								#for activating and deactivating portal camera updates
+var pd										#portal distance - distance between portal pairs
+var pre_Channel								#used to compare editor set channel on the fly
+export(int, 1, 100, 1) var Channel = 1		#sets the portal channel
+export(int, 1,10,1) var max_recursion = 1 	#sets maximum recursion cameras to set
+export var size_x = 20.0					#sets portal size
+export var size_y = 20.0
+
+
+
+export(Color) var color						#sets portal frame and cameras color
+
+onready var surf = Plane(self.global_transform.basis.z.normalized(),self.global_transform.origin.dot(self.global_transform.basis.z.normalized()))	#for frustum camera
+onready var ren_t = $RenderTargets.get_children()
+onready var recs_v = $Recursions.get_children()
+onready var size = Vector2(size_x,size_y)
+var yyy
+var recs_c := {}
+
+
+#For Diagnostics============================================================================
+export(bool) var hidecam = false			#hide mirror camera
+#===========================================================================================
+
+func _ready(): 
+	add_to_group(\"portals\")
+	pre_Channel = Channel
+	_check_sync(0)
+#For Diagnostics=========================================================================================
+	if(hidecam==false):
+
+		for cam in recs_v:
+		#	cam.get_node(\"Camera/MeshInstance\").get(\"material/0\").set(\"resource_local_to_scene\",true)
+			cam.get_node(\"Camera/MeshInstance\").get(\"material/0\").set(\"albedo_color\",color)
+			if (cam.name==\"View1\"):
+				cam.get_node(\"Camera/MeshInstance\").get(\"material/0\").set(\"albedo_color\",Color(1.0,1.0,1.0,1.0))
+			cam.get_node(\"Camera/MeshInstance\").show()
+
+	else:
+		for hide in recs_v:
+			hide.get_node(\"Camera/MeshInstance\").hide()
+#For Diagnostics=========================================================================================
+	var e = 0
+	for cam in recs_v:
+		cam.get_child(0).add_to_group(\"PortalCams\")
+		cam.get_child(0).global_transform = self.global_transform
+		cam.get_child(0).rotation.y += PI
+		recs_c[e] = cam.get_node(\"Camera\")
+		e += 1
+	e = 0
+	#$DummyCam.rotation.y = PI		#you actually don't need this line anymore, since its already turned around in the scene but I just wanted to get my point accross 
+									#having it's rotation preped even before the script ran, actually saved me a lot of process time, beats having to add PI everytime in the \"update_cam\" function XD
+
+
+
+func _check_sync(a):
+		for i in range(get_tree().get_nodes_in_group(\"portals\").size()):
+			if(get_tree().get_nodes_in_group(\"portals\")[i].Channel==Channel && get_tree().get_nodes_in_group(\"portals\")[i]!=self && b<=1):
+				p = get_tree().get_nodes_in_group(\"portals\")[i]
+				b += 1
+
+		_sync(a)
+
+
+
+func _sync(a):
+
+	if(b == 1):
+		print(self.name,\" has one link: \",p.name)
+		if(a!=1):					#used to tell this portal's pair to sync up
+			p._check_sync(1)		#the \"a=1\" is used to stop the other portal from going through
+									#this function too many times
+			render(p.size_x,p.size_y)
+			yyy = p.size_y
+			
+		else:
+			render(size_x,size_y)
+			yyy = size_y
+
+	else:
+		if(b > 1):
+			print(self.name,\" has too many links \",b)
+			get_tree().call_group(\"portals\",\"_unrender\",Channel)
+		if(b == 0):
+			print(self.name,\" has no link \",b)
+		p = null
+		_unrender(Channel)
+	b = 0
+
+
+
+
+func _unrender(c):
+	if((Channel == c)):
+		act = false
+		$CSGCombiner.get(\"material_override\").set(\"albedo_color\",Color(0.0,0.0,0.0,1.0))
+		$CSGCombiner.set_scale(Vector3(size_x/20.0,size_y/20.0,1))
+		for n in ren_t:
+			n.hide()
+
+
+
+func render(size_X,size_Y):
+	act = true
+	pd = self.global_transform.origin.distance_to(p.global_transform.origin)
+	$CSGCombiner.get(\"material_override\").set(\"albedo_color\",color)
+	$CSGCombiner.set_scale(Vector3(size_X/20.0,size_Y/20.0,1))
+	for f in recs_v:
+		f.size = Vector2(size_X,size_Y)*20
+		#f.set_size_override(true, Vector2(size_X, size_Y))
+	for r in max_recursion:
+		ren_t[r].show()
+		ren_t[r].material_override.set_shader_param(\"portal\", p.get_node(\"Recursions\").get_child(r).get_texture())
+		ren_t[r].mesh.size = Vector2(size_X,size_Y)
+	if(max_recursion<10):
+		ren_t[max_recursion].hide()
+
+
+
+
+###Much thanks to JewWithGardenBeans for helping me with recursions: https://github.com/DeleteSystem32/godot-portal-example/blob/master/README.md
+###I learned how to to use Frustum culling thru JFonS' example build: https://github.com/JFonS/godot-mirror-example
+
+func update_cam(mt):
+	if(act):
+		if(p!=null):
+			var T = p.global_transform.inverse() * mt
+			T = T.rotated(Vector3(0, 1, 0), PI)
+			$DummyCam.transform.origin= T.origin
+
+
+			for j in range (max_recursion):
+					var t = p.global_transform.inverse() * $Recursions.get_child(j).get_child(0).global_transform
+
+					t = t.rotated(Vector3(0, 1, 0), PI)
+	
+					var PC = Vector2($Recursions.get_child(j).get_child(0).to_local(self.global_transform.origin).x,$Recursions.get_child(j).get_child(0).to_local(self.global_transform.origin).y)
+	
+					$Recursions.get_child(j).get_child(0).set_frustum(yyy,PC,
+						surf.project($Recursions.get_child(j).get_child(0).global_transform.origin
+							).distance_to($Recursions.get_child(j).get_child(0).global_transform.origin),100000)
+					$Recursions.get_child(j).get_child(0).global_transform = $DummyCam.global_transform
+					$DummyCam.transform.origin = t.origin
+
+
+
+func _on_VisibilityNotifier_camera_entered(camera):
+	if((p!=null)):
+		if((camera is PlayerCams)):
+			camera.connect(\"camera_moved\", p, \"update_cam\")
+
+
+
+
+func _on_VisibilityNotifier_camera_exited(camera):
+	if((camera is PlayerCams)&&(p!=null)):
+		camera.disconnect(\"camera_moved\", p, \"update_cam\")
+		print(self.name,\" is not visible to a Player \")
+
+	if((camera is PlayerCams)&&(Channel != pre_Channel)):
+		pre_Channel = Channel
+		print(self.name,\" has changed channel\\n \")
+		if(p!=null):
+			p._check_sync(0)
+		_check_sync(0)
+	if(size != Vector2(size_x,size_y)):
+		_check_sync(1)
+		p._check_sync(0)
+		print(\"yeet\")
+		size = Vector2(size_x,size_y)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+
+[sub_resource type="SpatialMaterial" id=2]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=3]
+size = Vector3( 22, 22, 1 )
+
+[sub_resource type="CubeMesh" id=4]
+size = Vector3( 20, 20, 2 )
+
+[sub_resource type="PrismMesh" id=5]
+size = Vector3( 0.5, 1, 2 )
+
+[sub_resource type="Shader" id=6]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+
+void fragment() {
+	ALBEDO = texture(portal, vec2(UV.x,(1.0-UV.y))).rgb;
+	//ALBEDO = texture(portal, SCREEN_UV).rgb;
+}"
+
+[sub_resource type="ViewportTexture" id=7]
+
+[sub_resource type="ShaderMaterial" id=8]
+resource_local_to_scene = true
+shader = SubResource( 6 )
+shader_param/portal = SubResource( 7 )
+
+[sub_resource type="QuadMesh" id=9]
+resource_local_to_scene = true
+size = Vector2( 20, 30 )
+
+[sub_resource type="Shader" id=10]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+void fragment() {
+	ALBEDO = texture(portal, vec2(UV.x,(1.0-UV.y))).rgb;
+
+}"
+
+[sub_resource type="ViewportTexture" id=11]
+
+[sub_resource type="ShaderMaterial" id=12]
+resource_local_to_scene = true
+shader = SubResource( 10 )
+shader_param/portal = SubResource( 11 )
+
+[sub_resource type="QuadMesh" id=13]
+resource_local_to_scene = true
+size = Vector2( 20, 30 )
+
+[sub_resource type="Shader" id=14]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+void fragment() {
+	ALBEDO = texture(portal, vec2((UV.x),(1.0-UV.y))).rgb;
+}"
+
+[sub_resource type="ViewportTexture" id=15]
+
+[sub_resource type="ShaderMaterial" id=16]
+resource_local_to_scene = true
+shader = SubResource( 14 )
+shader_param/portal = SubResource( 15 )
+
+[sub_resource type="QuadMesh" id=17]
+resource_local_to_scene = true
+size = Vector2( 20, 20 )
+
+[sub_resource type="Shader" id=18]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+void fragment() {
+	ALBEDO = texture(portal, vec2((UV.x),(1.0-UV.y))).rgb;
+}"
+
+[sub_resource type="ViewportTexture" id=19]
+viewport_path = NodePath("Recursions/View3")
+
+[sub_resource type="ShaderMaterial" id=20]
+resource_local_to_scene = true
+shader = SubResource( 18 )
+shader_param/portal = SubResource( 19 )
+
+[sub_resource type="QuadMesh" id=21]
+resource_local_to_scene = true
+size = Vector2( 20, 20 )
+
+[sub_resource type="Shader" id=22]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+void fragment() {
+	ALBEDO = texture(portal, vec2((UV.x),(1.0-UV.y))).rgb;
+}"
+
+[sub_resource type="ViewportTexture" id=23]
+viewport_path = NodePath("Recursions/View4")
+
+[sub_resource type="ShaderMaterial" id=24]
+resource_local_to_scene = true
+shader = SubResource( 22 )
+shader_param/portal = SubResource( 23 )
+
+[sub_resource type="QuadMesh" id=25]
+resource_local_to_scene = true
+size = Vector2( 20, 20 )
+
+[sub_resource type="Shader" id=26]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+void fragment() {
+	ALBEDO = texture(portal, vec2((UV.x),(1.0-UV.y))).rgb;
+}"
+
+[sub_resource type="ViewportTexture" id=27]
+viewport_path = NodePath("Recursions/View4")
+
+[sub_resource type="ShaderMaterial" id=28]
+resource_local_to_scene = true
+shader = SubResource( 26 )
+shader_param/portal = SubResource( 27 )
+
+[sub_resource type="QuadMesh" id=29]
+resource_local_to_scene = true
+size = Vector2( 20, 20 )
+
+[sub_resource type="Shader" id=30]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+void fragment() {
+	ALBEDO = texture(portal, vec2((UV.x),(1.0-UV.y))).rgb;
+}"
+
+[sub_resource type="ViewportTexture" id=31]
+viewport_path = NodePath("Recursions/View4")
+
+[sub_resource type="ShaderMaterial" id=32]
+resource_local_to_scene = true
+shader = SubResource( 30 )
+shader_param/portal = SubResource( 31 )
+
+[sub_resource type="QuadMesh" id=33]
+resource_local_to_scene = true
+size = Vector2( 20, 20 )
+
+[sub_resource type="Shader" id=34]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+void fragment() {
+	ALBEDO = texture(portal, vec2((UV.x),(1.0-UV.y))).rgb;
+}"
+
+[sub_resource type="ViewportTexture" id=35]
+viewport_path = NodePath("Recursions/View4")
+
+[sub_resource type="ShaderMaterial" id=36]
+resource_local_to_scene = true
+shader = SubResource( 34 )
+shader_param/portal = SubResource( 35 )
+
+[sub_resource type="QuadMesh" id=37]
+resource_local_to_scene = true
+size = Vector2( 20, 20 )
+
+[sub_resource type="Shader" id=38]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+void fragment() {
+	ALBEDO = texture(portal, vec2((UV.x),(1.0-UV.y))).rgb;
+}"
+
+[sub_resource type="ViewportTexture" id=39]
+viewport_path = NodePath("Recursions/View4")
+
+[sub_resource type="ShaderMaterial" id=40]
+resource_local_to_scene = true
+shader = SubResource( 38 )
+shader_param/portal = SubResource( 39 )
+
+[sub_resource type="QuadMesh" id=41]
+resource_local_to_scene = true
+size = Vector2( 20, 20 )
+
+[sub_resource type="Shader" id=42]
+resource_local_to_scene = true
+code = "shader_type spatial;
+render_mode unshaded;
+uniform sampler2D portal : hint_albedo;
+void fragment() {
+	ALBEDO = texture(portal, vec2((UV.x),(1.0-UV.y))).rgb;
+}"
+
+[sub_resource type="ViewportTexture" id=43]
+viewport_path = NodePath("Recursions/View4")
+
+[sub_resource type="ShaderMaterial" id=44]
+resource_local_to_scene = true
+shader = SubResource( 42 )
+shader_param/portal = SubResource( 43 )
+
+[sub_resource type="QuadMesh" id=45]
+resource_local_to_scene = true
+size = Vector2( 20, 20 )
+
+[sub_resource type="CubeMesh" id=46]
+
+[sub_resource type="SpatialMaterial" id=47]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=48]
+size = Vector3( 1, 1, 3 )
+
+[sub_resource type="CubeMesh" id=49]
+
+[sub_resource type="SpatialMaterial" id=50]
+resource_local_to_scene = true
+
+[sub_resource type="CubeMesh" id=51]
+
+[sub_resource type="SpatialMaterial" id=52]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=53]
+size = Vector3( 1, 1, 3 )
+
+[sub_resource type="CubeMesh" id=54]
+
+[sub_resource type="SpatialMaterial" id=55]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=56]
+
+[sub_resource type="SpatialMaterial" id=57]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=58]
+
+[sub_resource type="SpatialMaterial" id=59]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=60]
+
+[sub_resource type="SpatialMaterial" id=61]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=62]
+
+[sub_resource type="SpatialMaterial" id=63]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=64]
+
+[sub_resource type="SpatialMaterial" id=65]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=66]
+
+[sub_resource type="SpatialMaterial" id=67]
+resource_local_to_scene = true
+albedo_color = Color( 0, 0, 0, 1 )
+
+[sub_resource type="CubeMesh" id=68]
+
+[sub_resource type="SphereMesh" id=69]
+
+[node name="PortalInstance" type="Spatial"]
+script = SubResource( 1 )
+
+[node name="CSGCombiner" type="CSGCombiner" parent="."]
+material_override = SubResource( 2 )
+use_collision = true
+
+[node name="CSGMesh" type="CSGMesh" parent="CSGCombiner"]
+mesh = SubResource( 3 )
+
+[node name="CSGMesh2" type="CSGMesh" parent="CSGCombiner"]
+operation = 2
+mesh = SubResource( 4 )
+
+[node name="CSGMesh6" type="CSGMesh" parent="CSGCombiner"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, -10.5, 0, 0 )
+operation = 2
+mesh = SubResource( 5 )
+
+[node name="CSGMesh7" type="CSGMesh" parent="CSGCombiner"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, -10.5, 2, 0 )
+operation = 2
+mesh = SubResource( 5 )
+
+[node name="CSGMesh8" type="CSGMesh" parent="CSGCombiner"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, -10.5, -2, 0 )
+operation = 2
+mesh = SubResource( 5 )
+
+[node name="VisibilityNotifier" type="VisibilityNotifier" parent="CSGCombiner"]
+transform = Transform( 10, 0, 0, 0, 10, 0, 0, 0, 1, 0, 0, 0 )
+aabb = AABB( -1, -1, 0, 2, 2, 0 )
+
+[node name="RenderTargets" type="MeshInstance" parent="."]
+
+[node name="MeshInstance0" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 2
+material_override = SubResource( 8 )
+cast_shadow = 0
+mesh = SubResource( 9 )
+material/0 = null
+
+[node name="MeshInstance1" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 4
+material_override = SubResource( 12 )
+cast_shadow = 0
+mesh = SubResource( 13 )
+material/0 = null
+
+[node name="MeshInstance2" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 8
+material_override = SubResource( 16 )
+cast_shadow = 0
+mesh = SubResource( 17 )
+material/0 = null
+
+[node name="MeshInstance3" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 16
+material_override = SubResource( 20 )
+cast_shadow = 0
+mesh = SubResource( 21 )
+material/0 = null
+
+[node name="MeshInstance4" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 32
+material_override = SubResource( 24 )
+cast_shadow = 0
+mesh = SubResource( 25 )
+material/0 = null
+
+[node name="MeshInstance5" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 64
+material_override = SubResource( 28 )
+cast_shadow = 0
+mesh = SubResource( 29 )
+material/0 = null
+
+[node name="MeshInstance6" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 128
+material_override = SubResource( 32 )
+cast_shadow = 0
+mesh = SubResource( 33 )
+material/0 = null
+
+[node name="MeshInstance7" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 256
+material_override = SubResource( 36 )
+cast_shadow = 0
+mesh = SubResource( 37 )
+material/0 = null
+
+[node name="MeshInstance8" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 512
+material_override = SubResource( 40 )
+cast_shadow = 0
+mesh = SubResource( 41 )
+material/0 = null
+
+[node name="MeshInstance9" type="MeshInstance" parent="RenderTargets"]
+visible = false
+layers = 1024
+material_override = SubResource( 44 )
+cast_shadow = 0
+mesh = SubResource( 45 )
+material/0 = null
+
+[node name="Recursions" type="Node" parent="."]
+
+[node name="View0" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+render_target_update_mode = 3
+
+[node name="Camera" type="Camera" parent="Recursions/View0"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 5
+current = true
+size = 8.7
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View0/Camera"]
+mesh = SubResource( 46 )
+material/0 = SubResource( 47 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View0/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 48 )
+material/0 = null
+
+[node name="View1" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+usage = 3
+render_target_update_mode = 3
+shadow_atlas_size = 1
+
+[node name="Camera" type="Camera" parent="Recursions/View1"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 9
+projection = 2
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View1/Camera"]
+mesh = SubResource( 49 )
+material/0 = SubResource( 50 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View1/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 48 )
+material/0 = null
+
+[node name="View2" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+render_target_update_mode = 3
+
+[node name="Camera" type="Camera" parent="Recursions/View2"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 17
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View2/Camera"]
+mesh = SubResource( 51 )
+material/0 = SubResource( 52 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View2/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 53 )
+material/0 = null
+
+[node name="View3" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+render_target_update_mode = 3
+
+[node name="Camera" type="Camera" parent="Recursions/View3"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 33
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View3/Camera"]
+mesh = SubResource( 54 )
+material/0 = SubResource( 55 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View3/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 53 )
+material/0 = null
+
+[node name="View4" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+render_target_update_mode = 3
+
+[node name="Camera" type="Camera" parent="Recursions/View4"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 65
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View4/Camera"]
+mesh = SubResource( 56 )
+material/0 = SubResource( 57 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View4/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 53 )
+material/0 = null
+
+[node name="View5" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+render_target_update_mode = 3
+
+[node name="Camera" type="Camera" parent="Recursions/View5"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 129
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View5/Camera"]
+mesh = SubResource( 58 )
+material/0 = SubResource( 59 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View5/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 53 )
+material/0 = null
+
+[node name="View6" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+render_target_update_mode = 3
+
+[node name="Camera" type="Camera" parent="Recursions/View6"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 257
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View6/Camera"]
+mesh = SubResource( 60 )
+material/0 = SubResource( 61 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View6/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 53 )
+material/0 = null
+
+[node name="View7" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+render_target_update_mode = 3
+
+[node name="Camera" type="Camera" parent="Recursions/View7"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 513
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View7/Camera"]
+mesh = SubResource( 62 )
+material/0 = SubResource( 63 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View7/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 53 )
+material/0 = null
+
+[node name="View8" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+render_target_update_mode = 3
+
+[node name="Camera" type="Camera" parent="Recursions/View8"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 1025
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View8/Camera"]
+mesh = SubResource( 64 )
+material/0 = SubResource( 65 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View8/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 53 )
+material/0 = null
+
+[node name="View9" type="Viewport" parent="Recursions"]
+keep_3d_linear = true
+render_target_update_mode = 3
+
+[node name="Camera" type="Camera" parent="Recursions/View9"]
+transform = Transform( -1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0 )
+cull_mask = 1
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="Recursions/View9/Camera"]
+mesh = SubResource( 66 )
+material/0 = SubResource( 67 )
+
+[node name="MeshInstance2" type="MeshInstance" parent="Recursions/View9/Camera/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 53 )
+material/0 = null
+
+[node name="DummyCam" type="Position3D" parent="."]
+transform = Transform( -1, 0, -3.25841e-07, 0, 1, 0, 3.25841e-07, 0, -1, 0, 0, 0 )
+visible = false
+
+[node name="MeshInstance" type="MeshInstance" parent="DummyCam"]
+mesh = SubResource( 68 )
+material/0 = null
+
+[node name="MeshInstance" type="MeshInstance" parent="DummyCam/MeshInstance"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1 )
+mesh = SubResource( 69 )
+material/0 = null
+[connection signal="camera_entered" from="CSGCombiner/VisibilityNotifier" to="." method="_on_VisibilityNotifier_camera_entered"]
+[connection signal="camera_exited" from="CSGCombiner/VisibilityNotifier" to="." method="_on_VisibilityNotifier_camera_exited"]
